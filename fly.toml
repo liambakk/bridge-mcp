@@ -1,0 +1,18 @@
+# Fly.io config for the Bridge participants MCP server.
+# App name is finalized by `fly launch`; update it here if Fly assigns a different one.
+app = "bridge-ef-mcp"
+primary_region = "lhr"
+
+[build]
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # Keep one machine warm so the OAuth handshake with claude.ai never hits a cold start.
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

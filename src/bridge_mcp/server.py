@@ -33,6 +33,24 @@ fields are available. All data is read-only.
 """
 
 
+def _build_auth(config: Config):
+    """OAuth provider for remote connectors (claude.ai web / ChatGPT), or None.
+
+    When AUTHKIT_DOMAIN + BRIDGE_PUBLIC_URL are set, the server authenticates via
+    WorkOS AuthKit (OAuth 2.0 with Dynamic Client Registration), which is what
+    hosted chatbot connectors require. Otherwise returns None and the server
+    falls back to the optional bearer-token check (see `main`).
+    """
+    if not (config.authkit_domain and config.public_url):
+        return None
+    from fastmcp.server.auth.providers.workos import AuthKitProvider
+
+    return AuthKitProvider(
+        authkit_domain=config.authkit_domain,
+        base_url=config.public_url,
+    )
+
+
 def build_server(config: Config, client: AirtableClient | None = None) -> FastMCP:
     """Construct the FastMCP server and register tools.
 
@@ -57,7 +75,11 @@ def build_server(config: Config, client: AirtableClient | None = None) -> FastMC
             cache_ttl_seconds=config.cache_ttl_seconds,
         )
 
-    mcp = FastMCP(name="The Bridge — Participants", instructions=INSTRUCTIONS)
+    mcp = FastMCP(
+        name="The Bridge — Participants",
+        instructions=INSTRUCTIONS,
+        auth=_build_auth(config),
+    )
 
     @mcp.tool
     def search(query: str) -> dict[str, Any]:
@@ -192,7 +214,16 @@ def main(argv: list[str] | None = None) -> None:
     host = args.host or config.host
     port = args.port or config.port
 
-    if config.auth_token:
+    if config.authkit_domain and config.public_url:
+        # OAuth (WorkOS AuthKit) is wired into the FastMCP app itself — no extra
+        # middleware. This is the path hosted connectors (claude.ai web) use.
+        print(
+            f"OAuth enabled via WorkOS AuthKit ({config.authkit_domain}). "
+            f"Public URL: {config.public_url}",
+            file=sys.stderr,
+        )
+        mcp.run(transport="http", host=host, port=port, path=args.path)
+    elif config.auth_token:
         import uvicorn
 
         app = mcp.http_app(path=args.path)

@@ -21,6 +21,10 @@ class Config:
     host: str
     port: int
     data_file: str | None = None
+    # WorkOS AuthKit OAuth (required for claude.ai web / ChatGPT remote connectors).
+    # When both are set, the server authenticates via OAuth instead of a bearer token.
+    authkit_domain: str | None = None
+    public_url: str | None = None
 
 
 def _require(name: str) -> str:
@@ -61,4 +65,6 @@ def load_config() -> Config:
         host=os.environ.get("HOST", "0.0.0.0").strip() or "0.0.0.0",
         port=int(os.environ.get("PORT", "8000")),
         data_file=data_file,
+        authkit_domain=_opt("AUTHKIT_DOMAIN"),
+        public_url=_opt("BRIDGE_PUBLIC_URL"),
     )

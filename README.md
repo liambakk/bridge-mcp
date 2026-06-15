@@ -85,23 +85,32 @@ tunnel with e.g. [`ngrok`](https://ngrok.com): `ngrok http 8000`.
 
 ## Connecting a chatbot
 
-### Claude (claude.ai / Claude Desktop — remote connector)
+> **Auth: hosted connectors need OAuth, not a bearer token.** claude.ai web and
+> ChatGPT custom connectors authenticate via OAuth (Dynamic Client Registration)
+> and have no field for a static header. Set `AUTHKIT_DOMAIN` + `BRIDGE_PUBLIC_URL`
+> to enable OAuth via WorkOS AuthKit (see below). `BRIDGE_MCP_TOKEN` only works for
+> local/stdio clients and `curl`.
+
+### Claude (claude.ai web / Claude Desktop — remote connector, OAuth)
 
 1. Settings → **Connectors** → **Add custom connector**.
 2. URL: `https://<your-host>/mcp`.
-3. If you set `BRIDGE_MCP_TOKEN`, add an `Authorization: Bearer <token>` header.
+3. Click **Connect** — you'll be redirected to the WorkOS AuthKit login, then
+   bounced back connected. No header to configure.
 
-### Claude Desktop (local, stdio)
+### Claude Desktop (local, stdio — no OAuth needed)
 
-Add to `claude_desktop_config.json`:
+Add to `claude_desktop_config.json` (point `command` at the installed
+`bridge-mcp` binary, e.g. the project venv):
 
 ```json
 {
   "mcpServers": {
     "bridge": {
-      "command": "uv",
-      "args": ["run", "bridge-mcp", "--transport", "stdio"],
-      "cwd": "/absolute/path/to/bridge-mcp"
+      "command": "/absolute/path/to/.venv/bin/bridge-mcp",
+      "args": ["--transport", "stdio"],
+      "cwd": "/absolute/path/to/bridge-mcp",
+      "env": { "BRIDGE_DATA_FILE": "/absolute/path/to/founders.json" }
     }
   }
 }
@@ -109,14 +118,20 @@ Add to `claude_desktop_config.json`:
 
 ### ChatGPT (custom connector / deep research)
 
-ChatGPT only supports **remote** MCP servers, and requires the `search` and
-`fetch` tools — both of which this server provides.
+ChatGPT only supports **remote** MCP servers over public **HTTPS**, requires the
+`search` and `fetch` tools (both provided), and authenticates via OAuth.
 
 1. Enable **Developer mode / Connectors** (Settings → Connectors).
 2. **Add custom connector** → paste `https://<your-host>/mcp`.
-3. Supply the `Authorization: Bearer <token>` header if you set one.
+3. Complete the OAuth login when prompted.
 
-The server must be reachable over public **HTTPS** for ChatGPT to accept it.
+### Hosting with OAuth (WorkOS AuthKit)
+
+The server speaks OAuth when `AUTHKIT_DOMAIN` and `BRIDGE_PUBLIC_URL` are set
+(see `.env.example`). In the WorkOS dashboard (**Connect → Configuration**):
+enable **Dynamic Client Registration**, and add your MCP endpoint
+(`https://<your-host>/mcp`) as a **Resource Indicator**. A `Dockerfile` and
+`fly.toml` are included for deploying to Fly.io.
 
 ## Development
 
