@@ -28,6 +28,9 @@ class Config:
     # Exa web search. When set, the server exposes optional `research` /
     # `research_participant` tools that enrich profiles with public web sources.
     exa_api_key: str | None = None
+    # Path to a logo image. When set, the server serves it at /logo and (if a
+    # public URL is known) advertises it as the MCP server icon.
+    logo_file: str | None = None
 
 
 def _require(name: str) -> str:
@@ -71,4 +74,5 @@ def load_config() -> Config:
         authkit_domain=_opt("AUTHKIT_DOMAIN"),
         public_url=_opt("BRIDGE_PUBLIC_URL"),
         exa_api_key=_opt("EXA_API_KEY"),
+        logo_file=_opt("BRIDGE_LOGO_FILE"),
     )

@@ -11,7 +11,11 @@ RUN pip install --no-cache-dir .
 # Bake the participant data export into the image. Gated at runtime by OAuth.
 COPY founders.json ./founders.json
 
+# Bake the logo (served publicly at /logo, advertised as the MCP server icon).
+COPY bridge.jpeg ./bridge.jpeg
+
 ENV BRIDGE_DATA_FILE=/app/founders.json \
+    BRIDGE_LOGO_FILE=/app/bridge.jpeg \
     HOST=0.0.0.0 \
     PORT=8080
 

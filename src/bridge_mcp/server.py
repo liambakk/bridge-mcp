@@ -34,6 +34,19 @@ fields are available. All data is read-only.
 """
 
 
+def _load_logo(path: str | None) -> tuple[bytes | None, str]:
+    """Read the logo image, returning (bytes, media_type). (None, _) if absent."""
+    if not path:
+        return None, "image/png"
+    from pathlib import Path
+
+    p = Path(path)
+    if not p.is_file():
+        return None, "image/png"
+    media = "image/jpeg" if p.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
+    return p.read_bytes(), media
+
+
 def _build_auth(config: Config):
     """OAuth provider for remote connectors (claude.ai web / ChatGPT), or None.
 
@@ -88,11 +101,33 @@ def build_server(
     else:
         exa = None
 
+    logo_bytes, logo_media = _load_logo(config.logo_file)
+    icons = None
+    if logo_bytes and config.public_url:
+        from mcp.types import Icon
+
+        logo_url = f"{config.public_url.rstrip('/')}/logo"
+        icons = [Icon(src=logo_url, mimeType=logo_media, sizes=["200x200"])]
+
     mcp = FastMCP(
         name="The Bridge — Participants",
         instructions=INSTRUCTIONS,
+        website_url=config.public_url or None,
+        icons=icons,
         auth=_build_auth(config),
     )
+
+    if logo_bytes:
+
+        @mcp.custom_route("/logo", methods=["GET"])
+        async def serve_logo(request):  # noqa: ANN001 - Starlette request
+            from starlette.responses import Response
+
+            return Response(
+                content=logo_bytes,
+                media_type=logo_media,
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
 
     @mcp.tool
     def search(query: str) -> dict[str, Any]:
