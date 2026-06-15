@@ -16,6 +16,7 @@ from fastmcp import FastMCP
 
 from .airtable import AirtableClient, AirtableError
 from .config import Config, load_config
+from .local import LocalClient
 from .formatting import (
     record_title,
     record_to_text,
@@ -36,14 +37,25 @@ def build_server(config: Config, client: AirtableClient | None = None) -> FastMC
     """Construct the FastMCP server and register tools.
 
     `client` can be injected for testing; otherwise one is built from `config`.
+    When `config.data_file` is set, the server reads from a local JSON export
+    instead of the live Airtable API.
     """
-    airtable = client or AirtableClient(
-        api_key=config.api_key,
-        base_id=config.base_id,
-        table_name=config.table_name,
-        view=config.view,
-        cache_ttl_seconds=config.cache_ttl_seconds,
-    )
+    if client is not None:
+        airtable = client
+    elif config.data_file:
+        airtable = LocalClient(
+            path=config.data_file,
+            base_id=config.base_id or None,
+            table_name=config.table_name,
+        )
+    else:
+        airtable = AirtableClient(
+            api_key=config.api_key,
+            base_id=config.base_id,
+            table_name=config.table_name,
+            view=config.view,
+            cache_ttl_seconds=config.cache_ttl_seconds,
+        )
 
     mcp = FastMCP(name="The Bridge — Participants", instructions=INSTRUCTIONS)
 
@@ -85,7 +97,7 @@ def build_server(config: Config, client: AirtableClient | None = None) -> FastMC
             "title": record_title(record, schema.primary_field_name),
             "text": record_to_text(record, schema.field_names),
             "url": airtable.record_url(record["id"]),
-            "metadata": {"source": "airtable", "table": schema.name},
+            "metadata": {"source": getattr(airtable, "source", "airtable"), "table": schema.name},
         }
 
     @mcp.tool

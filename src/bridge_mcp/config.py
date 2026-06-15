@@ -20,6 +20,7 @@ class Config:
     auth_token: str | None
     host: str
     port: int
+    data_file: str | None = None
 
 
 def _require(name: str) -> str:
@@ -40,13 +41,24 @@ def load_config() -> Config:
         value = os.environ.get(name, "").strip()
         return value or None
 
+    # When a local JSON export is provided, Airtable credentials are optional —
+    # the server reads from disk instead of the live API.
+    data_file = _opt("BRIDGE_DATA_FILE")
+    if data_file:
+        api_key = _opt("AIRTABLE_API_KEY") or ""
+        base_id = _opt("AIRTABLE_BASE_ID") or ""
+    else:
+        api_key = _require("AIRTABLE_API_KEY")
+        base_id = _require("AIRTABLE_BASE_ID")
+
     return Config(
-        api_key=_require("AIRTABLE_API_KEY"),
-        base_id=_require("AIRTABLE_BASE_ID"),
+        api_key=api_key,
+        base_id=base_id,
         table_name=_opt("AIRTABLE_TABLE_NAME"),
         view=_opt("AIRTABLE_VIEW"),
         cache_ttl_seconds=int(os.environ.get("CACHE_TTL_SECONDS", "300")),
         auth_token=_opt("BRIDGE_MCP_TOKEN"),
         host=os.environ.get("HOST", "0.0.0.0").strip() or "0.0.0.0",
         port=int(os.environ.get("PORT", "8000")),
+        data_file=data_file,
     )
