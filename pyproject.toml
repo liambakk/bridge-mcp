@@ -1,0 +1,32 @@
+[project]
+name = "bridge-mcp"
+version = "0.1.0"
+description = "MCP server exposing Entrepreneur First 'The Bridge' participant data from Airtable to ChatGPT, Claude, and other MCP clients."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "liam" }]
+keywords = ["mcp", "airtable", "chatgpt", "claude", "entrepreneur-first"]
+dependencies = [
+    "fastmcp>=2.3.0",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "uvicorn>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+bridge-mcp = "bridge_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bridge_mcp"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
