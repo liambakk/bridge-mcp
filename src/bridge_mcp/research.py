@@ -23,8 +23,20 @@ API_URL = "https://api.exa.ai/search"
 _DEFAULT_NUM_RESULTS = 5
 _MAX_NUM_RESULTS = 25  # cap to bound cost / latency, whatever a caller asks for
 _MAX_CHARACTERS = 1000  # how much page text Exa returns per result
-# Fields we'll fold into a participant's research query when present.
-_COMPANY_FIELDS = ("Company", "Startup", "Organisation", "Organization", "Business", "Venture")
+# Short, identifying fields we fold into a participant's research query when
+# present — generic Airtable column names first, then common export field names
+# (role / one-liner). The first non-empty match wins, capped to a few words so a
+# long free-text value doesn't bloat or over-narrow the search.
+# Short, identifying fields we fold into a participant's research query when
+# present: an actual org name first, then a descriptive one-liner / headline.
+# We deliberately exclude generic role/title fields (e.g. "CEO or CTO") — they're
+# the same across people, so they add noise and match unrelated profiles rather
+# than disambiguate. When none of these are present, the bare name is the query.
+_CONTEXT_FIELDS = (
+    "Company", "Startup", "Organisation", "Organization", "Business", "Venture",
+    "one_liner", "headline", "tagline",
+)
+_MAX_CONTEXT_CHARS = 80
 
 
 class ExaError(RuntimeError):
@@ -52,13 +64,17 @@ class ResearchResult:
 
 
 def participant_query(record: dict[str, Any], primary_field: str) -> str:
-    """Build a web-research query for a participant: their name + company if known."""
+    """Build a web-research query for a participant: their name plus a short
+    identifying detail (company / role / one-liner) when the data has one."""
     name = record_title(record, primary_field)
     fields = record.get("fields", {})
-    for candidate in _COMPANY_FIELDS:
-        company = stringify_value(fields.get(candidate)).strip()
-        if company and company.lower() not in name.lower():
-            return f"{name} {company}"
+    for candidate in _CONTEXT_FIELDS:
+        context = re.sub(r"\s+", " ", stringify_value(fields.get(candidate))).strip()
+        if not context or context.lower() in name.lower():
+            continue
+        if len(context) > _MAX_CONTEXT_CHARS:
+            context = context[:_MAX_CONTEXT_CHARS].rsplit(" ", 1)[0].rstrip()
+        return f"{name} {context}".strip()
     return name
 
 

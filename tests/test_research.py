@@ -84,3 +84,25 @@ def test_participant_query_combines_name_and_company():
 def test_participant_query_falls_back_to_name_only():
     record = {"id": "rec1", "fields": {"Name": "Ada Lovelace"}}
     assert participant_query(record, "Name") == "Ada Lovelace"
+
+
+def test_participant_query_uses_one_liner_when_no_company():
+    record = {"id": "rec1", "fields": {"full_name": "Aimar Haddadi", "one_liner": "building AI-native spaces"}}
+    assert participant_query(record, "full_name") == "Aimar Haddadi building AI-native spaces"
+
+
+def test_participant_query_ignores_generic_role_field():
+    # `role` is identical across the cohort ("CEO or CTO"), so it must not be
+    # appended — a name-only query disambiguates better than a shared role string.
+    record = {"id": "rec1", "fields": {"full_name": "Aimar Haddadi", "role": "CEO or CTO"}}
+    assert participant_query(record, "full_name") == "Aimar Haddadi"
+
+
+def test_participant_query_caps_context_length_without_ellipsis():
+    long_one_liner = "building " + "ai " * 60  # well over the cap
+    record = {"id": "rec1", "fields": {"full_name": "Aimar Haddadi", "one_liner": long_one_liner}}
+    query = participant_query(record, "full_name")
+    appended = query[len("Aimar Haddadi "):]
+    assert len(appended) <= 80
+    assert "…" not in query
+    assert query.startswith("Aimar Haddadi building ai")
