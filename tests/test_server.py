@@ -4,6 +4,7 @@ from fastmcp import Client
 
 from bridge_mcp.airtable import TableSchema
 from bridge_mcp.config import Config
+from bridge_mcp.research import ResearchResult
 from bridge_mcp.server import build_server
 
 RECORDS = [
@@ -41,6 +42,32 @@ class FakeAirtable:
         return f"https://airtable.com/app/tbl1/{record_id}"
 
 
+class FakeExa:
+    """Duck-typed stand-in for ExaClient (no network)."""
+
+    source = "exa"
+
+    def __init__(self, results=None):
+        self._results = (
+            results
+            if results is not None
+            else [
+                ResearchResult(
+                    title="Ada in TechCrunch",
+                    url="https://tc.com/ada",
+                    snippet="Ada raised a seed round for Engines.",
+                    published_date="2024-05-01",
+                    author="Writer",
+                )
+            ]
+        )
+        self.calls = []
+
+    def search(self, query, num_results=5):
+        self.calls.append((query, num_results))
+        return self._results
+
+
 DUMMY_CONFIG = Config(
     api_key="x",
     base_id="appX",
@@ -57,12 +84,26 @@ def make_server():
     return build_server(DUMMY_CONFIG, client=FakeAirtable(RECORDS))
 
 
-def call(tool, args):
-    mcp = make_server()
+def make_server_with_exa(exa):
+    return build_server(DUMMY_CONFIG, client=FakeAirtable(RECORDS), exa_client=exa)
 
+
+def call(tool, args):
+    return call_on(make_server(), tool, args)
+
+
+def call_on(mcp, tool, args):
     async def run():
         async with Client(mcp) as client:
             return await client.call_tool(tool, args)
+
+    return asyncio.run(run())
+
+
+def tool_names(mcp):
+    async def run():
+        async with Client(mcp) as client:
+            return {t.name for t in await client.list_tools()}
 
     return asyncio.run(run())
 
@@ -114,3 +155,39 @@ def test_describe_table():
     data = call("describe_table", {}).data
     assert data["primary_field"] == "Name"
     assert {f["name"] for f in data["fields"]} == {"Name", "Company", "Sector"}
+
+
+def test_research_tools_absent_without_exa():
+    names = tool_names(make_server())
+    assert "research" not in names
+    assert "research_participant" not in names
+
+
+def test_research_tools_registered_with_exa():
+    names = tool_names(make_server_with_exa(FakeExa()))
+    assert {"research", "research_participant"} <= names
+
+
+def test_research_participant_returns_cited_results():
+    exa = FakeExa()
+    data = call_on(make_server_with_exa(exa), "research_participant", {"id": "rec1"}).data
+    assert data["participant"] == {"id": "rec1", "name": "Ada Lovelace"}
+    assert data["query"] == "Ada Lovelace Engines"
+    assert data["count"] == 1
+    assert data["results"][0]["url"] == "https://tc.com/ada"
+    assert exa.calls == [("Ada Lovelace Engines", 5)]
+
+
+def test_research_participant_unknown_id_errors():
+    import pytest
+
+    with pytest.raises(Exception, match="No participant found"):
+        call_on(make_server_with_exa(FakeExa()), "research_participant", {"id": "nope"})
+
+
+def test_research_general_query_passes_through():
+    exa = FakeExa()
+    data = call_on(make_server_with_exa(exa), "research", {"query": "fintech founders", "num_results": 3}).data
+    assert data["query"] == "fintech founders"
+    assert data["results"][0]["title"] == "Ada in TechCrunch"
+    assert exa.calls == [("fintech founders", 3)]

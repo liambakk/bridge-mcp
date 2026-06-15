@@ -25,6 +25,9 @@ class Config:
     # When both are set, the server authenticates via OAuth instead of a bearer token.
     authkit_domain: str | None = None
     public_url: str | None = None
+    # Exa web search. When set, the server exposes optional `research` /
+    # `research_participant` tools that enrich profiles with public web sources.
+    exa_api_key: str | None = None
 
 
 def _require(name: str) -> str:
@@ -67,4 +70,5 @@ def load_config() -> Config:
         data_file=data_file,
         authkit_domain=_opt("AUTHKIT_DOMAIN"),
         public_url=_opt("BRIDGE_PUBLIC_URL"),
+        exa_api_key=_opt("EXA_API_KEY"),
     )

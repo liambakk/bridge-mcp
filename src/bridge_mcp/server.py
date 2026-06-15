@@ -17,6 +17,7 @@ from fastmcp import FastMCP
 from .airtable import AirtableClient, AirtableError
 from .config import Config, load_config
 from .local import LocalClient
+from .research import ExaClient, participant_query
 from .formatting import (
     record_title,
     record_to_text,
@@ -51,12 +52,17 @@ def _build_auth(config: Config):
     )
 
 
-def build_server(config: Config, client: AirtableClient | None = None) -> FastMCP:
+def build_server(
+    config: Config,
+    client: AirtableClient | None = None,
+    exa_client: ExaClient | None = None,
+) -> FastMCP:
     """Construct the FastMCP server and register tools.
 
-    `client` can be injected for testing; otherwise one is built from `config`.
-    When `config.data_file` is set, the server reads from a local JSON export
-    instead of the live Airtable API.
+    `client` / `exa_client` can be injected for testing; otherwise they're built
+    from `config`. When `config.data_file` is set, the server reads from a local
+    JSON export instead of the live Airtable API. The web-research tools are only
+    registered when an Exa client is available (config or injected).
     """
     if client is not None:
         airtable = client
@@ -74,6 +80,13 @@ def build_server(config: Config, client: AirtableClient | None = None) -> FastMC
             view=config.view,
             cache_ttl_seconds=config.cache_ttl_seconds,
         )
+
+    if exa_client is not None:
+        exa: ExaClient | None = exa_client
+    elif config.exa_api_key:
+        exa = ExaClient(api_key=config.exa_api_key)
+    else:
+        exa = None
 
     mcp = FastMCP(
         name="The Bridge — Participants",
@@ -160,6 +173,56 @@ def build_server(config: Config, client: AirtableClient | None = None) -> FastMC
                 for f in schema.fields
             ],
         }
+
+    if exa is not None:
+
+        @mcp.tool
+        def research_participant(id: str, num_results: int = 5) -> dict[str, Any]:
+            """Research a participant on the public web (past experience, news, etc.).
+
+            Looks up the participant, derives a search query from their name and
+            company, and returns ranked web sources with short excerpts and links
+            you can cite. Use this to supplement a profile from `fetch` with
+            background the Airtable data doesn't contain.
+
+            Args:
+                id: The participant id returned by `search` / `list_participants`.
+                num_results: Maximum number of web sources to return (default 5).
+            """
+            record = airtable.get_record(id)
+            if record is None:
+                raise ValueError(f"No participant found with id {id!r}.")
+            schema = airtable.get_schema()
+            query = participant_query(record, schema.primary_field_name)
+            results = exa.search(query, num_results=num_results)
+            return {
+                "participant": {
+                    "id": record["id"],
+                    "name": record_title(record, schema.primary_field_name),
+                },
+                "query": query,
+                "count": len(results),
+                "results": [r.to_dict() for r in results],
+            }
+
+        @mcp.tool
+        def research(query: str, num_results: int = 5) -> dict[str, Any]:
+            """Search the public web directly (companies, sectors, people, news).
+
+            A general-purpose escape hatch for research that isn't tied to one
+            participant id — e.g. a company, a market, or a name. Returns ranked
+            web sources with short excerpts and links you can cite.
+
+            Args:
+                query: What to research, e.g. "Engines deep tech funding".
+                num_results: Maximum number of web sources to return (default 5).
+            """
+            results = exa.search(query, num_results=num_results)
+            return {
+                "query": query,
+                "count": len(results),
+                "results": [r.to_dict() for r in results],
+            }
 
     return mcp
 
