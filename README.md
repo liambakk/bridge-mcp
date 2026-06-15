@@ -49,11 +49,15 @@ uv venv && uv pip install -e .
 Edit `.env`:
 
 ```dotenv
-AIRTABLE_API_KEY=patXXXX...        # your PAT
-AIRTABLE_BASE_ID=appXXXXXXXXXXXXXX # the base id
-AIRTABLE_TABLE_NAME=Participants   # optional; defaults to the first table
-BRIDGE_MCP_TOKEN=some-long-secret  # optional but recommended when hosting publicly
+AIRTABLE_API_KEY=patXXXX...          # your PAT (the only thing you must supply)
+AIRTABLE_BASE_ID=apprmplt8X7rOIY6Z   # The Bridge base (pre-filled)
+AIRTABLE_TABLE_NAME=tblktmVkEaIIKb00o # The Bridge participants table (pre-filled)
+BRIDGE_MCP_TOKEN=some-long-secret    # optional but recommended when hosting publicly
 ```
+
+> The base and table IDs above come from the share link
+> `https://airtable.com/apprmplt8X7rOIY6Z/.../tblktmVkEaIIKb00o` and are already
+> set in `.env.example`, so the only value you need to add is your PAT.
 
 ## Running it
 
