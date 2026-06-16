@@ -20,17 +20,20 @@ clients) can use directly.
 | `fetch(id)` | Full profile for one participant by id. Returns `{id, title, text, url, metadata}`. *(Required by ChatGPT.)* |
 | `list_participants(limit)` | Everyone attending, with ids and deep links. |
 | `describe_table()` | The table name and its available fields, so the model knows what it can ask about. |
-| `research_participant(id)` | *(optional)* Enrich a profile with public web sources — past experience, news, etc. Requires `EXA_API_KEY`. |
-| `research(query)` | *(optional)* General web search for companies, sectors or people. Requires `EXA_API_KEY`. |
+| `research_participant(id)` | *(optional)* Enrich a profile with public web sources, **grounded in the record** — past experience, news, etc. Requires `EXA_API_KEY`. |
+| `research(query)` | *(optional)* General (ungrounded) web search for companies, sectors or people. Requires `EXA_API_KEY`. |
 
 The server is **schema‑agnostic**: it discovers the table's columns at runtime
 via the Airtable Metadata API, so it keeps working if you rename, add or remove
 fields. Access to the participant data is strictly **read‑only**.
 
 The two `research*` tools are **opt‑in**: they only appear when `EXA_API_KEY` is
-set (powered by [Exa](https://exa.ai)). They search the public web — the model
-takes a participant's name and company and pulls back cited sources — so the
-core directory works the same with or without a key.
+set (powered by [Exa](https://exa.ai)), so the core directory works the same with
+or without a key. `research_participant` is **grounded in the JSON record**: it
+anchors the search to identifiers we already hold (the participant's LinkedIn URL
+and the web/email domains in their profile) and keeps only web results that
+corroborate one of them — filtering out same‑name strangers, at the cost of fewer
+or no sources for someone with little web presence.
 
 ## Prerequisites
 

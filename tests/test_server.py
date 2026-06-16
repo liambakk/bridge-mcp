@@ -88,6 +88,23 @@ def make_server_with_exa(exa):
     return build_server(DUMMY_CONFIG, client=FakeAirtable(RECORDS), exa_client=exa)
 
 
+# A record with an identifier (LinkedIn URL + a personal domain) so grounding has
+# something to anchor on.
+RESEARCH_RECORD = {
+    "id": "rec1",
+    "fields": {
+        "Name": "Ada Lovelace",
+        "Company": "Engines",
+        "email": "ada@analyticalengines.io",
+        "linkedin": "https://www.linkedin.com/in/ada-lovelace",
+    },
+}
+
+
+def make_research_server(exa, records=None):
+    return build_server(DUMMY_CONFIG, client=FakeAirtable(records or [RESEARCH_RECORD]), exa_client=exa)
+
+
 def call(tool, args):
     return call_on(make_server(), tool, args)
 
@@ -168,14 +185,32 @@ def test_research_tools_registered_with_exa():
     assert {"research", "research_participant"} <= names
 
 
-def test_research_participant_returns_cited_results():
-    exa = FakeExa()
-    data = call_on(make_server_with_exa(exa), "research_participant", {"id": "rec1"}).data
+def test_research_participant_returns_grounded_results():
+    grounded = ResearchResult(title="Ada Lovelace", url="https://linkedin.com/in/ada-lovelace", snippet="Founder")
+    exa = FakeExa(results=[grounded])  # matches the record's known LinkedIn URL
+    data = call_on(make_research_server(exa), "research_participant", {"id": "rec1"}).data
     assert data["participant"] == {"id": "rec1", "name": "Ada Lovelace"}
-    assert data["query"] == "Ada Lovelace Engines"
+    assert data["query"].startswith("Ada Lovelace")
+    assert data["grounded_on"]["linkedin"] is True
     assert data["count"] == 1
-    assert data["results"][0]["url"] == "https://tc.com/ada"
-    assert exa.calls == [("Ada Lovelace Engines", 5)]
+    assert data["results"][0]["url"] == "https://linkedin.com/in/ada-lovelace"
+    # Over-fetches (more than num_results) before grounding, using the built query.
+    assert len(exa.calls) == 1
+    assert exa.calls[0][0] == data["query"]
+    assert exa.calls[0][1] >= 5
+
+
+def test_research_participant_filters_out_ungrounded_results():
+    grounded = ResearchResult(title="Ada", url="https://linkedin.com/in/ada-lovelace", snippet="x")
+    stranger = ResearchResult(title="Other Ada", url="https://x/other", snippet="an unrelated person in Paris")
+    data = call_on(
+        make_research_server(FakeExa(results=[grounded, stranger])),
+        "research_participant",
+        {"id": "rec1"},
+    ).data
+    urls = [r["url"] for r in data["results"]]
+    assert "https://linkedin.com/in/ada-lovelace" in urls
+    assert "https://x/other" not in urls
 
 
 def test_research_participant_unknown_id_errors():

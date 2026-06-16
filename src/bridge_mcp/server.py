@@ -17,7 +17,7 @@ from fastmcp import FastMCP
 from .airtable import AirtableClient, AirtableError
 from .config import Config, load_config
 from .local import LocalClient
-from .research import ExaClient, participant_query
+from .research import ExaClient, build_grounding
 from .formatting import (
     record_title,
     record_to_text,
@@ -213,12 +213,17 @@ def build_server(
 
         @mcp.tool
         def research_participant(id: str, num_results: int = 5) -> dict[str, Any]:
-            """Research a participant on the public web (past experience, news, etc.).
+            """Research a participant on the public web, grounded in their record.
 
-            Looks up the participant, derives a search query from their name and
-            company, and returns ranked web sources with short excerpts and links
-            you can cite. Use this to supplement a profile from `fetch` with
-            background the Airtable data doesn't contain.
+            The search is anchored to identifiers we already hold for this person
+            (their LinkedIn URL and the web / email domains in their profile — a
+            personal site, a company domain, a university address): the query is
+            built from those, and every web result is kept only if it corroborates
+            one of them. This deliberately filters out same-name strangers, so
+            results are about *this* participant — at the cost of returning few or
+            no sources for someone with little web presence.
+
+            Use it to supplement a profile from `fetch` with grounded background.
 
             Args:
                 id: The participant id returned by `search` / `list_participants`.
@@ -228,16 +233,17 @@ def build_server(
             if record is None:
                 raise ValueError(f"No participant found with id {id!r}.")
             schema = airtable.get_schema()
-            query = participant_query(record, schema.primary_field_name)
-            results = exa.search(query, num_results=num_results)
+            grounding = build_grounding(record, schema.primary_field_name)
+            # Over-fetch, then keep only results grounded in the record.
+            fetch_n = min(max(num_results * 3, 10), 25)
+            candidates = exa.search(grounding.query, num_results=fetch_n)
+            grounded = [r for r in candidates if grounding.is_grounded(r)][:num_results]
             return {
-                "participant": {
-                    "id": record["id"],
-                    "name": record_title(record, schema.primary_field_name),
-                },
-                "query": query,
-                "count": len(results),
-                "results": [r.to_dict() for r in results],
+                "participant": {"id": record["id"], "name": grounding.name},
+                "query": grounding.query,
+                "grounded_on": grounding.anchors_used(),
+                "count": len(grounded),
+                "results": [r.to_dict() for r in grounded],
             }
 
         @mcp.tool

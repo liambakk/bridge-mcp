@@ -23,20 +23,38 @@ API_URL = "https://api.exa.ai/search"
 _DEFAULT_NUM_RESULTS = 5
 _MAX_NUM_RESULTS = 25  # cap to bound cost / latency, whatever a caller asks for
 _MAX_CHARACTERS = 1000  # how much page text Exa returns per result
-# Short, identifying fields we fold into a participant's research query when
-# present — generic Airtable column names first, then common export field names
-# (role / one-liner). The first non-empty match wins, capped to a few words so a
-# long free-text value doesn't bloat or over-narrow the search.
-# Short, identifying fields we fold into a participant's research query when
-# present: an actual org name first, then a descriptive one-liner / headline.
-# We deliberately exclude generic role/title fields (e.g. "CEO or CTO") — they're
-# the same across people, so they add noise and match unrelated profiles rather
-# than disambiguate. When none of these are present, the bare name is the query.
-_CONTEXT_FIELDS = (
-    "Company", "Startup", "Organisation", "Organization", "Business", "Venture",
-    "one_liner", "headline", "tagline",
-)
-_MAX_CONTEXT_CHARS = 80
+
+# ── Grounding ────────────────────────────────────────────────────────────────
+# A participant search is anchored to identifiers we already hold in the record:
+# their LinkedIn URL and the web / email domains in their profile (a personal
+# site, a company domain, a university address). Those are unique to the person,
+# so the query is built from them and every Exa result is kept only if it
+# corroborates one — the search can't drift to a same-name stranger. (Earlier
+# attempts to mine company/school names out of prose proved too noisy on real
+# bios; domains are the reliable signal.)
+_MAX_ANCHORS = 12
+_MIN_LABEL_LEN = 3
+
+# Domains that identify a platform, not a person: free-mail, social, shorteners.
+_GENERIC_DOMAINS = {
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "yahoo.com",
+    "icloud.com", "me.com", "mac.com", "proton.me", "protonmail.com", "aol.com",
+    "live.com", "msn.com", "gmx.com", "yandex.com", "qq.com",
+    "linkedin.com", "lnkd.in", "twitter.com", "x.com", "github.com", "github.io",
+    "instagram.com", "facebook.com", "fb.com", "threads.com", "threads.net",
+    "youtube.com", "youtu.be", "medium.com", "substack.com", "tiktok.com",
+    "t.co", "bit.ly", "notion.so", "notion.site", "calendly.com", "gravatar.com",
+}
+# Domain labels too generic to anchor on even when they're someone's own domain.
+_GENERIC_LABELS = {"data", "tech", "app", "dev", "get", "the", "my", "co", "hq", "io", "ai"}
+_ALLOWED_TLDS = {
+    "com", "org", "net", "io", "ai", "co", "dev", "app", "xyz", "me", "tech",
+    "so", "gg", "page", "site", "uk", "de", "fr", "es", "nl", "eu", "us", "ca",
+    "au", "ch", "se", "no", "fi", "it", "ie", "ac", "edu",
+}
+
+_LINKEDIN_RE = re.compile(r"https?://[^\s,'\")]*linkedin\.com/[^\s,'\")]+", re.I)
+_DOMAIN_RE = re.compile(r"\b([a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+)\b", re.I)
 
 
 class ExaError(RuntimeError):
@@ -63,19 +81,103 @@ class ResearchResult:
         }
 
 
-def participant_query(record: dict[str, Any], primary_field: str) -> str:
-    """Build a web-research query for a participant: their name plus a short
-    identifying detail (company / role / one-liner) when the data has one."""
+def _normalize_url(url: Any) -> str:
+    """Strip scheme / www / query / trailing slash so URLs compare equal."""
+    u = stringify_value(url).strip().lower()
+    u = re.sub(r"^https?://", "", u)
+    u = re.sub(r"^www\.", "", u)
+    return u.split("?")[0].split("#")[0].rstrip("/")
+
+
+def _mineable(value: Any) -> bool:
+    """True for free-text fields. Skips attachments (lists of dicts) and the like,
+    whose filenames/URLs would otherwise be mistaken for the person's own domain."""
+    if isinstance(value, str):
+        return True
+    if isinstance(value, list):
+        return all(isinstance(x, str) for x in value)
+    return False
+
+
+def _known_domains(text: str) -> list[str]:
+    """Extract identifying web / email domains from a record's free text."""
+    domains: list[str] = []
+    seen: set[str] = set()
+    for raw in _DOMAIN_RE.findall(text):
+        domain = raw.lower().strip(".")
+        if domain.startswith("www."):
+            domain = domain[4:]  # so www.linkedin.com collapses to the excluded linkedin.com
+        if domain in seen or domain in _GENERIC_DOMAINS:
+            continue
+        if domain.rsplit(".", 1)[-1] not in _ALLOWED_TLDS:
+            continue
+        seen.add(domain)
+        domains.append(domain)
+    return domains
+
+
+@dataclass
+class Grounding:
+    """A participant search anchored to identifiers from their own record."""
+
+    name: str
+    query: str
+    linkedin_url: str | None      # normalized
+    domains: tuple[str, ...]      # identifying web / email domains, e.g. "nusmark.com"
+    labels: tuple[str, ...]       # their registrable names, e.g. "nusmark"
+
+    @property
+    def has_anchors(self) -> bool:
+        return bool(self.linkedin_url or self.domains)
+
+    def anchors_used(self) -> dict[str, Any]:
+        return {"linkedin": bool(self.linkedin_url), "domains": list(self.domains)}
+
+    def is_grounded(self, result: "ResearchResult") -> bool:
+        """True if `result` corroborates an identifier we hold for this person."""
+        url = _normalize_url(result.url)
+        if self.linkedin_url and url == self.linkedin_url:
+            return True
+        hay = f"{result.title} {result.snippet} {url}".lower()
+        if any(domain in hay for domain in self.domains):
+            return True
+        if any(re.search(rf"\b{re.escape(label)}\b", hay) for label in self.labels):
+            return True
+        # No identifiers at all (name only) — fall back to requiring the full name.
+        if not self.has_anchors:
+            return all(tok in hay for tok in self.name.lower().split())
+        return False
+
+
+def build_grounding(record: dict[str, Any], primary_field: str) -> Grounding:
+    """Build a record-grounded query + verifier from a participant's own data."""
     name = record_title(record, primary_field)
     fields = record.get("fields", {})
-    for candidate in _CONTEXT_FIELDS:
-        context = re.sub(r"\s+", " ", stringify_value(fields.get(candidate))).strip()
-        if not context or context.lower() in name.lower():
-            continue
-        if len(context) > _MAX_CONTEXT_CHARS:
-            context = context[:_MAX_CONTEXT_CHARS].rsplit(" ", 1)[0].rstrip()
-        return f"{name} {context}".strip()
-    return name
+    full_text = " ".join(stringify_value(v) for v in fields.values())
+
+    m = _LINKEDIN_RE.search(full_text)
+    linkedin_url = _normalize_url(m.group(0)) if m else None
+
+    # Identifying domains come only from real text fields (not attachments).
+    text = " ".join(stringify_value(v) for k, v in fields.items() if _mineable(v))
+    domains = _known_domains(text)[:_MAX_ANCHORS]
+    labels: list[str] = []
+    for domain in domains:
+        label = domain.split(".")[0]
+        if len(label) >= _MIN_LABEL_LEN and label not in _GENERIC_LABELS and label not in labels:
+            labels.append(label)
+
+    # The query is the name plus a couple of distinctive domain labels, which bias
+    # Exa toward the right person (e.g. "Emre Karaoglu tensor-omega").
+    query = re.sub(r"\s+", " ", f"{name} {' '.join(labels[:2])}").strip()
+
+    return Grounding(
+        name=name,
+        query=query,
+        linkedin_url=linkedin_url,
+        domains=tuple(domains),
+        labels=tuple(labels),
+    )
 
 
 def _clean(value: Any, limit: int = 600) -> str:
